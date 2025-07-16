@@ -44,6 +44,9 @@ period_unit = st.sidebar.selectbox("Period Denomination", ["Years", "Quarters", 
 period_factors = {"Years": 365, "Quarters": 365/4, "Months": 365/12, "Days": 1}
 period_divisor = period_factors[period_unit]
 
+# Maximum date supported by pandas (2262-04-11)
+MAX_DATE = datetime(2262, 4, 11).date()
+
 # Period conversion reference data (defined in global scope)
 period_ref_data = [
     {"Period": "1 Year", "Days": 365},
@@ -79,17 +82,28 @@ with col1:
             if input_method == "Vesting Date":
                 vesting_date = st.date_input(f"Vesting Date {i+1} (DD/MM/YYYY)", 
                                             min_value=grant_date,
+                                            max_value=MAX_DATE,
                                             key=f"vest_date_{i}")
                 vesting_row["Vesting Date"] = vesting_date.strftime('%d/%m/%Y')
                 vesting_period_days = (vesting_date - grant_date).days
                 vesting_row["Vesting Period (Days)"] = vesting_period_days
                 vesting_row["Vesting Period"] = vesting_period_days / period_divisor
             else:
+                # Calculate max vesting period to keep vesting_date <= MAX_DATE
+                max_days = (MAX_DATE - grant_date).days
+                max_period = max_days / period_divisor
                 vesting_period = st.number_input(f"Vesting Period for Vesting {i+1} ({period_unit})", 
-                                                min_value=0.0, value=1.0, step=0.1, key=f"vest_period_{i}")
+                                                min_value=0.0, 
+                                                max_value=max_period,
+                                                value=min(1.0, max_period),
+                                                step=0.1, 
+                                                key=f"vest_period_{i}")
                 vesting_row["Vesting Period"] = vesting_period
                 vesting_row["Vesting Period (Days)"] = vesting_period * period_divisor
                 vesting_date = grant_date + timedelta(days=int(vesting_row["Vesting Period (Days)"]))
+                if vesting_date > MAX_DATE:
+                    st.error(f"Vesting {i+1}: Vesting period results in a date beyond 11/04/2262, which is not supported. Please reduce the vesting period to {max_period:.2f} {period_unit} or less.")
+                    st.stop()
                 vesting_row["Vesting Date"] = vesting_date.strftime('%d/%m/%Y')
             
             vesting_row["Weight (%)"] = st.number_input(f"Weight (%) for Vesting {i+1}", 
@@ -103,20 +117,40 @@ with col1:
             if exercise_input_method == "Exercise End Date":
                 exercise_end_date = st.date_input(f"Exercise End Date {i+1} (DD/MM/YYYY)", 
                                                 min_value=vesting_date,
+                                                max_value=MAX_DATE,
+                                                value=vesting_date,  # Set default to vesting_date
                                                 key=f"exercise_end_date_{i}")
                 vesting_row["Exercise End Date"] = exercise_end_date.strftime('%d/%m/%Y')
-                vesting_date_dt = pd.to_datetime(vesting_row["Vesting Date"], format='%d/%m/%Y').date()
-                exercise_validity_days = (exercise_end_date - vesting_date_dt).days
-                vesting_row["Exercise Validity (Days)"] = exercise_validity_days
-                vesting_row["Exercise Validity"] = exercise_validity_days / period_divisor
+                try:
+                    vesting_date_dt = pd.to_datetime(vesting_row["Vesting Date"], format='%d/%m/%Y').date()
+                    exercise_validity_days = (exercise_end_date - vesting_date_dt).days
+                    vesting_row["Exercise Validity (Days)"] = exercise_validity_days
+                    vesting_row["Exercise Validity"] = exercise_validity_days / period_divisor
+                except Exception as e:
+                    st.error(f"Vesting {i+1}: Invalid date conversion for vesting date {vesting_row['Vesting Date']}. Error: {str(e)}")
+                    st.stop()
             else:
+                # Calculate max exercise validity to keep exercise_end_date <= MAX_DATE
+                max_exercise_days = (MAX_DATE - vesting_date).days
+                max_exercise_period = max_exercise_days / period_divisor
                 exercise_validity = st.number_input(f"Exercise Validity for Vesting {i+1} ({period_unit})", 
-                                                  min_value=0.0, value=1.0, step=0.1, key=f"exercise_validity_{i}")
+                                                  min_value=0.0, 
+                                                  max_value=max_exercise_period,
+                                                  value=min(1.0, max_exercise_period),
+                                                  step=0.1, 
+                                                  key=f"exercise_validity_{i}")
                 vesting_row["Exercise Validity"] = exercise_validity
                 vesting_row["Exercise Validity (Days)"] = exercise_validity * period_divisor
-                vesting_date_dt = pd.to_datetime(vesting_row["Vesting Date"], format='%d/%m/%Y').date()
-                exercise_end_date = vesting_date_dt + timedelta(days=int(vesting_row["Exercise Validity (Days)"]))
-                vesting_row["Exercise End Date"] = exercise_end_date.strftime('%d/%m/%Y')
+                try:
+                    vesting_date_dt = pd.to_datetime(vesting_row["Vesting Date"], format='%d/%m/%Y').date()
+                    exercise_end_date = vesting_date_dt + timedelta(days=int(vesting_row["Exercise Validity (Days)"]))
+                    if exercise_end_date > MAX_DATE:
+                        st.error(f"Vesting {i+1}: Exercise validity results in a date beyond 11/04/2262, which is not supported. Please reduce the exercise validity to {max_exercise_period:.2f} {period_unit} or less.")
+                        st.stop()
+                    vesting_row["Exercise End Date"] = exercise_end_date.strftime('%d/%m/%Y')
+                except Exception as e:
+                    st.error(f"Vesting {i+1}: Invalid date conversion for vesting date {vesting_row['Vesting Date']}. Error: {str(e)}")
+                    st.stop()
             
             vesting_row["Min Life (Days)"] = vesting_row["Vesting Period (Days)"]
             vesting_row["Min Life"] = vesting_row["Vesting Period"]
